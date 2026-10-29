@@ -17,6 +17,12 @@ xcodebuild -project CleanRoomMetal.xcodeproj -scheme CleanRoomMetal -configurati
 open build/Build/Products/Debug/CleanRoomMetal.app
 ```
 
+To check a frame without watching the window, render one 1280×720 PNG and quit. The pointer is centered, the button is up, and the clock is one sixtieth of a second:
+
+```sh
+build/Build/Products/Debug/CleanRoomMetal.app/Contents/MacOS/CleanRoomMetal --snapshot /tmp/clean-room.png
+```
+
 The window title shows frames per second. Drag to set `pointerDown`. Press `R` to call `reset()`.
 
 ## New experiment
@@ -24,6 +30,13 @@ The window title shows frames per second. Drag to set `pointerDown`. Press `R` t
 1. Duplicate this folder, or edit in place.
 2. Replace the body of `Prototype` and the functions in `Prototype.metal`.
 3. Leave `App.swift` alone unless the shell itself is wrong.
+
+`Prototype` may own textures, buffers, and extra pipelines. A simulation that remembers the last frame stays there. `PrototypeUniforms` in the Swift file and the Metal file is one layout: keep the fields and the padding identical.
+
+In a copy, change the display name and bundle id in `CleanRoomMetal.xcodeproj/project.pbxproj`:
+
+- `INFOPLIST_KEY_CFBundleDisplayName`
+- `PRODUCT_BUNDLE_IDENTIFIER`
 
 Each frame the shell calls `encode(into:target:frame:)`.
 

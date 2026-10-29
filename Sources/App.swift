@@ -1,6 +1,8 @@
 import AppKit
+import ImageIO
 import Metal
 import QuartzCore
+import UniformTypeIdentifiers
 
 @main
 enum AppMain {
@@ -31,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.backgroundColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 1)
         window.acceptsMouseMovedEvents = true
         super.init()
+        view.snapshotURL = Self.snapshotURL(from: CommandLine.arguments)
         view.onTitle = { [weak window] title in
             window?.title = title
         }
@@ -38,10 +41,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMenu()
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(view)
-        NSApp.activate(ignoringOtherApps: true)
+        if view.snapshotURL == nil {
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+            window.makeFirstResponder(view)
+            NSApp.activate(ignoringOtherApps: true)
+        }
         view.start()
     }
 
@@ -68,10 +73,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewItem.submenu = viewMenu
         NSApp.mainMenu = main
     }
+
+    private static func snapshotURL(from arguments: [String]) -> URL? {
+        guard let flag = arguments.firstIndex(of: "--snapshot") else { return nil }
+        let next = arguments.index(after: flag)
+        guard next < arguments.endIndex else {
+            fputs("Clean Room Metal: --snapshot needs a PNG path\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        return URL(fileURLWithPath: arguments[next])
+    }
 }
 
 final class MetalView: NSView {
     var onTitle: ((String) -> Void)?
+    var snapshotURL: URL?
 
     private let metalLayer = CAMetalLayer()
     private var displayLink: CADisplayLink?
@@ -115,8 +131,98 @@ final class MetalView: NSView {
             return
         }
         onTitle?(prototype?.name ?? "Clean Room Metal")
+        if let snapshotURL {
+            renderSnapshot(to: snapshotURL)
+            return
+        }
         displayLink = displayLink(target: self, selector: #selector(step(_:)))
         displayLink?.add(to: .main, forMode: .common)
+    }
+
+    private func renderSnapshot(to url: URL) {
+        guard let device = metalLayer.device, let queue, let prototype else {
+            fputs("Clean Room Metal snapshot failed: Metal is unavailable\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        let width = 1280
+        let height = 720
+        let bytesPerRow = ((width * 4 + 255) / 256) * 256
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.usage = [.renderTarget]
+        descriptor.storageMode = .private
+        guard let texture = device.makeTexture(descriptor: descriptor),
+              let readback = device.makeBuffer(length: bytesPerRow * height, options: .storageModeShared),
+              let buffer = queue.makeCommandBuffer()
+        else {
+            fputs("Clean Room Metal snapshot failed: could not allocate\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        let frame = ExperimentFrame(
+            time: 1.0 / 60.0,
+            delta: 1.0 / 60.0,
+            drawableSize: SIMD2(Float(width), Float(height)),
+            pointer: SIMD2(0.5, 0.5),
+            pointerDown: false
+        )
+        prototype.encode(into: buffer, target: texture, frame: frame)
+        guard let blit = buffer.makeBlitCommandEncoder() else {
+            fputs("Clean Room Metal snapshot failed: could not read the frame\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        blit.copy(
+            from: texture,
+            sourceSlice: 0,
+            sourceLevel: 0,
+            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+            sourceSize: MTLSize(width: width, height: height, depth: 1),
+            to: readback,
+            destinationOffset: 0,
+            destinationBytesPerRow: bytesPerRow,
+            destinationBytesPerImage: bytesPerRow * height
+        )
+        blit.endEncoding()
+        buffer.commit()
+        buffer.waitUntilCompleted()
+        if buffer.status != .completed {
+            fputs("Clean Room Metal snapshot failed: GPU error\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        do {
+            try Self.writePNG(readback.contents(), width: width, height: height, bytesPerRow: bytesPerRow, to: url)
+        } catch {
+            fputs("Clean Room Metal snapshot failed: \(error)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        print(url.path)
+        fflush(stdout)
+        exit(EXIT_SUCCESS)
+    }
+
+    private static func writePNG(_ bytes: UnsafeMutableRawPointer, width: Int, height: Int, bytesPerRow: Int, to url: URL) throws {
+        let bitmap = CGBitmapInfo.byteOrder32Little.union(CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue))
+        guard let context = CGContext(
+            data: bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: bitmap.rawValue
+        ), let image = context.makeImage() else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
     }
 
     @objc private func step(_ link: CADisplayLink) {

@@ -2,6 +2,7 @@ import Metal
 
 // Experiment surface. Replace this file and Prototype.metal.
 // The window, drawable, clock, and pointer live in App.swift.
+// This type may own textures, buffers, and pipelines. Leave App.swift alone.
 // Drawable pixel format: bgra8Unorm.
 // pointer is view space: origin bottom-left, y up, both axes 0...1.
 // R calls reset().
@@ -14,6 +15,7 @@ struct ExperimentFrame {
     var pointerDown: Bool
 }
 
+// Layout shared with PrototypeUniforms in Prototype.metal. Keep the fields and padding identical.
 struct PrototypeUniforms {
     var time: Float
     var pad0: Float

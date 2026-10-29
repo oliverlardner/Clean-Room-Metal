@@ -9,6 +9,7 @@ struct PrototypeVarying {
     float2 uv;
 };
 
+// Layout shared with PrototypeUniforms in Prototype.swift. Keep the fields and padding identical.
 struct PrototypeUniforms {
     float time;
     float pad0;
